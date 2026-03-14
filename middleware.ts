@@ -12,7 +12,7 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options?: object }[]) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
@@ -25,10 +25,8 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Refresh session — important! Do not remove
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Protect /bookmarks route
   if (!user && request.nextUrl.pathname.startsWith('/bookmarks')) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
