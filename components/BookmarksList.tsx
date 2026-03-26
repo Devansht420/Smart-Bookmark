@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 type Bookmark = {
@@ -24,12 +24,25 @@ export default function BookmarksList({
   const [editTitle, setEditTitle] = useState('')
   const [editUrl, setEditUrl] = useState('')
   const [saving, setSaving] = useState(false)
+  const [realtimeStatus, setRealtimeStatus] = useState<string>('connecting')
+
+  const refetchAll = useCallback(async () => {
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('bookmarks')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+    if (data) setBookmarks(data)
+  }, [userId])
 
   useEffect(() => {
     const supabase = createClient()
 
     const channel = supabase
-      .channel(`bookmarks:${userId}`)
+      .channel(`bookmarks:${userId}`, {
+        config: { presence: { key: userId } },
+      })
       .on(
         'postgres_changes',
         {
@@ -73,14 +86,26 @@ export default function BookmarksList({
           setBookmarks((prev) => prev.filter((b) => b.id !== payload.old.id))
         }
       )
-      .subscribe((status) => {
-        console.log('Realtime status:', status)
+      .subscribe((status, err) => {
+        console.log('Realtime status:', status, err)
+        setRealtimeStatus(status)
+
+        // If subscription failed, fall back to refetching data
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('Realtime failed, refetching...')
+          refetchAll()
+        }
+
+        // On reconnect, refetch to catch any missed changes
+        if (status === 'SUBSCRIBED') {
+          refetchAll()
+        }
       })
 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId])
+  }, [userId, refetchAll])
 
   const handleDelete = async (id: string) => {
     setDeleting(id)
@@ -91,6 +116,8 @@ export default function BookmarksList({
       .eq('id', id)
       .eq('user_id', userId)
     if (error) console.error('Delete error:', error)
+    // Optimistic update in case realtime is slow
+    setBookmarks((prev) => prev.filter((b) => b.id !== id))
     setDeleting(null)
   }
 
@@ -151,9 +178,17 @@ export default function BookmarksList({
 
   return (
     <div>
-      <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-        {bookmarks.length} bookmark{bookmarks.length !== 1 ? 's' : ''}
-      </p>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+          {bookmarks.length} bookmark{bookmarks.length !== 1 ? 's' : ''}
+        </p>
+        <span className="text-xs px-2 py-0.5 rounded-full" style={{
+          background: realtimeStatus === 'SUBSCRIBED' ? 'rgba(100,255,100,0.1)' : 'rgba(255,200,0,0.1)',
+          color: realtimeStatus === 'SUBSCRIBED' ? '#4caf50' : '#ffc107',
+        }}>
+          {realtimeStatus === 'SUBSCRIBED' ? '● live' : '● connecting...'}
+        </span>
+      </div>
       <ul className="flex flex-col gap-3">
         {bookmarks.map((bookmark) => (
           <li
